@@ -107,6 +107,10 @@ These could also be made into parameters.
 Modifications by Ian Mahon
 
 */
+
+
+#include <iostream>
+
 #include "precomp.hpp"
 #include "surf.hpp"
 
@@ -465,6 +469,7 @@ struct KeypointGreater
 static void fastHessianDetector( const Mat& sum, const Mat& mask_sum, std::vector<KeyPoint>& keypoints,
                                  int nOctaves, int nOctaveLayers, float hessianThreshold )
 {
+	double partial = (double) cv::getTickCount();
     /* Sampling step along image x and y axes at first octave. This is doubled
        for each additional octave. WARNING: Increasing this improves speed,
        however keypoint extraction becomes unreliable. */
@@ -500,17 +505,44 @@ static void fastHessianDetector( const Mat& sum, const Mat& mask_sum, std::vecto
         }
         step *= 2;
     }
-
+    std::vector<cv::Mat> testDets(nTotalLayers), testTraces(nTotalLayers);
+    for(int i=0;i<nTotalLayers;i++){
+    	testDets[i] = dets[i].clone();
+    	testTraces[i] = traces[i].clone();
+    }
+    partial = (double) cv::getTickCount();
     // Calculate hessian determinant and trace samples in each layer
     parallel_for_( Range(0, nTotalLayers),
                    SURFBuildInvoker(sum, sizes, sampleSteps, dets, traces) );
-
+    std::cout<<"hessDetTr="<<((double) cv::getTickCount()-partial)/cv::getTickFrequency()<<std::endl;
+    /**********************************************************/
+    partial = (double) cv::getTickCount();
+    for(int i=0; i<nTotalLayers; i++)
+        calcLayerDetAndTrace(sum, sizes[i], sampleSteps[i], testDets[i], testTraces[i]);
+    std::cout<<"myHessDetTr="<<((double) cv::getTickCount()-partial)/cv::getTickFrequency()<<std::endl;
+	/**********************************************************/
+	/**********************************************************
+    for(int i=0; i<nTotalLayers;i++){
+		cv::Mat equal;
+		cv::bitwise_xor(testDets[i],dets[i],equal);
+		if(cv::countNonZero(equal)>0)
+			std::cout<<"Dets not equals!"<<std::endl;
+		else
+			std::cout<<"Dets equals"<<std::endl;
+		cv::bitwise_xor(testTraces[i],traces[i],equal);
+		if(cv::countNonZero(equal)>0)
+			std::cout<<"Traces not equals!"<<std::endl;
+		else
+			std::cout<<"Traces eqausl"<<std::endl;
+    }
+    **********************************************************/
+    partial = (double) cv::getTickCount();
     // Find maxima in the determinant of the hessian
     parallel_for_( Range(0, nMiddleLayers),
                    SURFFindInvoker(sum, mask_sum, dets, traces, sizes,
                                    sampleSteps, middleIndices, keypoints,
                                    nOctaveLayers, hessianThreshold) );
-
+    std::cout<<"maxima="<<((double) cv::getTickCount()-partial)/cv::getTickFrequency()<<std::endl;
     std::sort(keypoints.begin(), keypoints.end(), KeypointGreater());
 }
 
@@ -886,6 +918,8 @@ void SURF_Impl::detectAndCompute(InputArray _img, InputArray _mask,
                       OutputArray _descriptors,
                       bool useProvidedKeypoints)
 {
+	double start = (double) cv::getTickCount();
+	double partial = (double) cv::getTickCount();
     int imgtype = _img.type(), imgcn = CV_MAT_CN(imgtype);
     bool doDescriptors = _descriptors.needed();
 
@@ -895,6 +929,7 @@ void SURF_Impl::detectAndCompute(InputArray _img, InputArray _mask,
 #ifdef HAVE_OPENCL
     if( ocl::useOpenCL() )
     {
+    	std::cout<<"In OpenCL"<<std::endl;
         SURF_OCL ocl_surf;
         UMat gpu_kpt;
         bool ok = ocl_surf.init(this);
@@ -932,7 +967,8 @@ void SURF_Impl::detectAndCompute(InputArray _img, InputArray _mask,
     CV_Assert(nOctaveLayers > 0);
 
     integral(img, sum, CV_32S);
-
+    std::cout<<"beforeKeypoints="<<((double) cv::getTickCount()-partial)/cv::getTickFrequency()<<std::endl;
+    partial = (double) cv::getTickCount();
     // Compute keypoints only if we are not asked for evaluating the descriptors are some given locations:
     if( !useProvidedKeypoints )
     {
@@ -943,7 +979,8 @@ void SURF_Impl::detectAndCompute(InputArray _img, InputArray _mask,
         }
         fastHessianDetector( sum, msum, keypoints, nOctaves, nOctaveLayers, (float)hessianThreshold );
     }
-
+    std::cout<<"keyPoints="<<((double) cv::getTickCount()-partial)/cv::getTickFrequency()<<std::endl;
+    partial = (double) cv::getTickCount();
     int i, j, N = (int)keypoints.size();
     if( N > 0 )
     {
@@ -998,6 +1035,8 @@ void SURF_Impl::detectAndCompute(InputArray _img, InputArray _mask,
             }
         }
     }
+    std::cout<<"descriptors="<<((double) cv::getTickCount()-partial)/cv::getTickFrequency()<<std::endl;
+    std::cout<<"surfTime="<<((double) cv::getTickCount()-start)/cv::getTickFrequency()<<std::endl;
 }
 
 Ptr<SURF> SURF::create(double _threshold, int _nOctaves, int _nOctaveLayers, bool _extended, bool _upright)
